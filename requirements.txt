@@ -3,5 +3,3 @@ pandas==2.2.1
 edgartools==2.20.0
 python-dotenv==1.0.0
 beautifulsoup4==4.12.3
-.env
-venv
