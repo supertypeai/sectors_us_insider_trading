@@ -6,6 +6,7 @@ from bs4 import BeautifulSoup as bs
 from dotenv import load_dotenv
 from edgar import *
 from neon_connector.neon_connector import NeonConnector
+from datetime import date, timedelta
 
 
 def parse_form_4_filing(accession_number, xml_content):
@@ -183,8 +184,11 @@ def parse_form_4_filing(accession_number, xml_content):
         int_cols = ['issuer_cik', 'owner_cik']
         temp_df[int_cols] = temp_df[int_cols].astype(int)
 
-        str_cols = ['transaction_date','security_title', 'accession_number', 'name', 'title', 'reporting_date', 'buy_sell', 'ownership_nature']
+        str_cols = ['security_title', 'accession_number', 'name', 'title', 'reporting_date', 'buy_sell', 'ownership_nature']
         temp_df[str_cols] = temp_df[str_cols].astype(str)
+        
+        dt_cols = ['transaction_date', 'reporting_date']
+        temp_df[dt_cols] = temp_df[dt_cols].apply(pd.to_datetime, errors='coerce', format='%Y-%m-%d')
         
         temp_df = temp_df.drop(columns = ['remarks', 'is_director', 'is_officer', 'is_other', 'is_ten_percent_owner', 'direct_or_indirect_ownership', 'transaction_code'])
         return temp_df
@@ -216,28 +220,38 @@ def retrieve_company_form_4_filing(company_ticker, min_date, excluded_acc_num=[]
         temp_df = parse_form_4_filing(filing.accession_number, filing.xml())
         temp_df['url'] = filing.primary_documents[0].url
         temp_df['filing_date'] = filing.filing_date
+        temp_df['filing_date'] = temp_df['filing_date'].apply(pd.to_datetime, errors='coerce', format='%Y-%m-%d')
+        
         if not temp_df.empty:
             company_df = pd.concat([company_df, temp_df], ignore_index=True)
             
     if not company_df.empty:  
-        company_df = company_df.query('issuer_cik == @company_cik')
+        company_df = company_df.query('issuer_cik == @company_cik & transaction_date >= @min_date')
     
     return company_df
 
-def retrieve_companies_form_4_filing(db_latest_form_4):
-    companies_df = pd.DataFrame()
-    symbols = db_latest_form_4['symbol'].unique()
-    
-    for symbol in symbols:
-        try:
-            symbol_df = db_latest_form_4.query('symbol =="AAPL"').head(1)
+def retrieve_companies_form_4_filing(symbols, db_latest_form_4=pd.DataFrame()):
+    def get_min_date_and_acc_num(symbol):
+        if not db_latest_form_4.empty and symbol in db_latest_form_4.symbol.values:
+            symbol_df = db_latest_form_4.query('symbol == @symbol').head(1)
             min_date = symbol_df.filing_date.values[0]
-            exc_acc_num = symbol_df.accession_numbers.values[0]
-            temp_df = retrieve_company_form_4_filing(symbol, min_date, exc_acc_num)
+            acc_num = symbol_df.accession_numbers.values[0]
+        else:
+            min_date = date.today() - timedelta(days=365*2)
+            acc_num = []
+        return min_date, acc_num
+
+    companies_df = pd.DataFrame()
+
+    for symbol in symbols:
+        min_date, acc_num = get_min_date_and_acc_num(symbol)
+        try:
+            temp_df = retrieve_company_form_4_filing(symbol, min_date, acc_num)
             if not temp_df.empty:
                 companies_df = pd.concat([companies_df, temp_df], ignore_index=True)
-        except:
-            print(f"Error retrieving data for {symbol}")
+        except Exception as e:
+            print(f"Error retrieving data for {symbol}: {e}")
+
     return companies_df
 
 def match_company_stock_row(row, db_company_stock):
@@ -335,7 +349,7 @@ def retrieve_company_owner_id(row, db_company_owner):
     - company_owner_id (int or None): Matching company owner id or None if no match is found.
     """
     # Filter db_company_owner based on owner_cik and company_stock_id
-    filtered_owner = db_company_owner[(db_company_owner['person_cik'] == row['owner_cik']) & (db_company_owner['id'] == row['company_stock_id'])]
+    filtered_owner = db_company_owner[(db_company_owner['person_cik'] == row['owner_cik']) & (db_company_owner['company_stock_id'] == row['company_stock_id'])]
     
     if not filtered_owner.empty:
         return filtered_owner['id'].values[0]
@@ -373,9 +387,11 @@ if __name__ == "__main__":
     connection_string = os.getenv('DATABASE_URL')
     nc = NeonConnector(connection_string)
     
+    response = nc.select_query("SELECT symbol from company_stock")
+    symbols = [x['symbol'] for x in response]
     response = nc.select_query("SELECT * FROM get_latest_form_4()")
     db_latest_form_4 = pd.DataFrame(response)
-    df = retrieve_companies_form_4_filing(db_latest_form_4)
+    df = retrieve_companies_form_4_filing(symbols, db_latest_form_4)
     
     response = nc.select_query('SELECT * from company_stock')
     db_company_stock = pd.DataFrame(response)
@@ -385,23 +401,27 @@ if __name__ == "__main__":
     db_sec_person_ciks = [row['cik'] for row in response]
     sec_person_df = create_sec_person_df(df, db_sec_person_ciks)
     sec_person_recs = nc.convert_df_to_records(sec_person_df[['cik', 'name']], int_cols=['cik'])
-    nc.batch_upsert('sec_person', sec_person_recs, conflict_columns=['cik'])
+    if len(sec_person_recs) > 0:
+        nc.batch_upsert('sec_person', sec_person_recs, conflict_columns=['cik'])
     
     company_owner_df = create_company_owner_df(df)
     company_owner_recs = nc.convert_df_to_records(company_owner_df[['person_cik', 'company_stock_id', 'position']])
-    nc.batch_upsert('company_owner', company_owner_recs, conflict_columns=['person_cik', 'company_stock_id'])
+    if len(company_owner_recs) > 0:
+        nc.batch_upsert('company_owner', company_owner_recs, conflict_columns=['person_cik', 'company_stock_id'])
     
     response = nc.select_query('SELECT * FROM company_owner')
     db_company_owner = pd.DataFrame(response)
     form_4_filing_df = create_form_4_filing_df(df, db_company_owner)
     form_4_filing_recs = nc.convert_df_to_records(form_4_filing_df[['accession_number', 'reporting_date', 'company_owner_id']])
-    nc.batch_upsert('form_4_filing', form_4_filing_recs, conflict_columns=['accession_number'])
+    if len(form_4_filing_recs) > 0:
+        nc.batch_upsert('form_4_filing', form_4_filing_recs, conflict_columns=['accession_number'])
     
     response = nc.select_query('SELECT * FROM form_4_filing')
     db_form_4_filing = pd.DataFrame(response)
     df['filing_id'] = df.apply(lambda row: retrieve_filing_id(row, db_form_4_filing), axis=1)
     form_4_transaction_recs = nc.convert_df_to_records(df[['transaction_date', 'shares', 'price_per_share', 'buy_sell', 'ownership_nature','filing_id']])
-    nc.batch_upsert('form_4_transaction', form_4_transaction_recs)
+    if len(form_4_transaction_recs) > 0:
+        nc.batch_upsert('form_4_transaction', form_4_transaction_recs)
     
     
     
