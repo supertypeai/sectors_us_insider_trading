@@ -318,8 +318,7 @@ def process_company_stock_id(df, db_company_stock):
 
     # Save unlisted security titles to a CSV file if any are found
     if not unlisted_security_titles.empty:
-        dt = pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')
-        unlisted_security_titles.to_csv(f'unlisted_security_titles_{dt}.csv', index=False)
+        unlisted_security_titles.to_csv(f'unlisted_security_titles.csv', index=False)
 
     temp_df = temp_df[temp_df['company_stock_id'] > 0]
     temp_df = temp_df.sort_values(by='reporting_date', ascending=False)
