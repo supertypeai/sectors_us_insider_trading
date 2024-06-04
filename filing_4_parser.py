@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 from edgar import *
 from neon_connector.neon_connector import NeonConnector
 from datetime import date, timedelta
+import argparse
 
 
 def parse_form_4_filing(accession_number, xml_content):
@@ -295,7 +296,7 @@ def match_company_stock_row(row, db_company_stock):
     else:
         return np.nan  # Return None if no match is found
 
-def process_company_stock_id(df, db_company_stock):
+def process_company_stock_id(df, db_company_stock, unlisted_security_title_file='unlisted_security.csv'):
     """
     Process DataFrame 'df' to match company stock and update 'company_stock_id'.
     Save unlisted security titles to a CSV file if any are found.
@@ -318,7 +319,7 @@ def process_company_stock_id(df, db_company_stock):
 
     # Save unlisted security titles to a CSV file if any are found
     if not unlisted_security_titles.empty:
-        unlisted_security_titles.to_csv(f'unlisted_security_titles.csv', index=False)
+        unlisted_security_titles.to_csv(unlisted_security_title_file, index=False)
 
     temp_df = temp_df[temp_df['company_stock_id'] > 0]
     temp_df = temp_df.sort_values(by='reporting_date', ascending=False)
@@ -379,22 +380,30 @@ def retrieve_filing_id(row, db_form_4_filing):
     else:
         return None
     
-if __name__ == "__main__":
+def upsert_data_to_db(batch_size=100, batch_num=1):
     set_identity("MyCompanyName my.email@domain.com")
 
     load_dotenv()
     connection_string = os.getenv('DATABASE_URL')
     nc = NeonConnector(connection_string)
     
-    response = nc.select_query("SELECT symbol from company_stock")
+    response = nc.select_query("SELECT symbol from company_stock ORDER BY updated_on DESC")
     symbols = [x['symbol'] for x in response]
+    
+    if batch_size == -1:
+        batch_symbols = symbols
+    elif batch_size > 0:
+        batch_symbols = symbols[
+                (batch_num - 1) * batch_size : batch_num * batch_size
+        ]
+        
     response = nc.select_query("SELECT * FROM get_latest_form_4()")
     db_latest_form_4 = pd.DataFrame(response)
-    df = retrieve_companies_form_4_filing(symbols, db_latest_form_4)
+    df = retrieve_companies_form_4_filing(batch_symbols, db_latest_form_4)
     
     response = nc.select_query('SELECT * from company_stock')
     db_company_stock = pd.DataFrame(response)
-    df = process_company_stock_id(df, db_company_stock)
+    df = process_company_stock_id(df, db_company_stock, unlisted_security_title_file=f'unlisted_security_titles_batch_{batch_num}.csv')
     
     response = nc.select_query('SELECT cik from sec_person')
     db_sec_person_ciks = [row['cik'] for row in response]
@@ -421,6 +430,13 @@ if __name__ == "__main__":
     form_4_transaction_recs = nc.convert_df_to_records(df[['transaction_date', 'shares', 'price_per_share', 'buy_sell', 'ownership_nature','filing_id']])
     if len(form_4_transaction_recs) > 0:
         nc.batch_upsert('form_4_transaction', form_4_transaction_recs)
+        
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description='Upsert filing 4 data to the database')
+    parser.add_argument("-bs", "--batch_size", help="Batch size", type=int, default=-1)
+    parser.add_argument("-bn", "--batch_num", help="Batch number", type=int, default=1)
+    args = parser.parse_args()
+    upsert_data_to_db(batch_size=args.batch_size, batch_num=args.batch_num)
     
     
     

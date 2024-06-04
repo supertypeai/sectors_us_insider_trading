@@ -26,7 +26,7 @@ jobs:
     - name: Run Python Script
       env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-      run: python filing_4_parser.py
+      run: python filing_4_parser.py -bs 200 -bn 3
     
     - name: Commit and Push Changes
       run: |
