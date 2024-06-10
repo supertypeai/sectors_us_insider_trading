@@ -1,0 +1,2 @@
+transaction_date,security_title,shares,price_per_share,remaining_shares,accession_number,name,title,reporting_date,issuer_cik,owner_cik,buy_sell,ownership_nature,url,filing_date,company_stock_id
+2024-06-04,Common Stock,1800.0,103.91,14579.0,0000950170-24-069449,BACON KENNETH J,Director,2024-06-04,766704,1204117,Sell,Direct,https://www.sec.gov/Archives/edgar/data/766704/000095017024069449/xslF345X05/ownership.xml,2024-06-05,-1.0
