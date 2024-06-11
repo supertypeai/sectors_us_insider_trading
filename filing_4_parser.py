@@ -420,7 +420,7 @@ def upsert_data_to_db(batch_size=100, batch_num=1):
     response = nc.select_query('SELECT * FROM company_owner')
     db_company_owner = pd.DataFrame(response)
     form_4_filing_df = create_form_4_filing_df(df, db_company_owner)
-    form_4_filing_recs = nc.convert_df_to_records(form_4_filing_df[['accession_number', 'reporting_date', 'company_owner_id']])
+    form_4_filing_recs = nc.convert_df_to_records(form_4_filing_df[['accession_number', 'reporting_date', 'company_owner_id', 'url', 'filing_date']])
     if len(form_4_filing_recs) > 0:
         nc.batch_upsert('form_4_filing', form_4_filing_recs, conflict_columns=['accession_number'])
     
