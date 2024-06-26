@@ -17,5 +17,5 @@ Parse data from SEC Form 4 XML (e.g. https://www.sec.gov/Archives/edgar/data/248
 - title (referring to officer): stored in `company_owner`
 
 ## Notes 
-`valid_security_titles` and `invalid_security_titles` in `company_stock` should be added manually
+`valid_security_titles` and `invalid_security_titles` in `company_stock` should be added manually. If the security title in the Form 4 is not listed in either `valid_security_titles` or `invalid_security_titles`, then the row will be saved in a csv file `unlisted_security_titles_batch_n.csv`.
     
